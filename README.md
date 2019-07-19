@@ -11,12 +11,10 @@ use Webfactory\ContentMapping\Synchronizer;
 use Webfactory\ContentMapping\Solr\SolariumDestinationAdapter;
 
 $solrClient = new Client($configArray); // see Solarium documentation for details
-$logger = ...; // any PSR3-Logger
 
-$destinationAdapter = new SolariumDestinationAdapter($solrClient, $logger);
-
-$synchronizer = new Synchronizer($sourceAdapter, $mapper, $destinationAdapter, $logger);
+$synchronizer = new Synchronizer($sourceAdapter, $mapper, new SolariumDestinationAdapter($solrClient));
 ```
+
 ## Credits, Copyright and License 
 
 This project was started at webfactory GmbH, Bonn.
