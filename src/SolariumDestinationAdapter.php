@@ -54,10 +54,10 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
      * @param Client $solrClient
      * @param LoggerInterface $logger
      */
-    public function __construct(Client $solrClient, LoggerInterface $logger, $batchSize = 20)
+    public function __construct(Client $solrClient, LoggerInterface $logger = null, $batchSize = 20)
     {
         $this->solrClient = $solrClient;
-        $this->logger = $logger;
+        $this->logger = $logger ?: new NullLogger();
         $this->batchSize = $batchSize;
     }
 
