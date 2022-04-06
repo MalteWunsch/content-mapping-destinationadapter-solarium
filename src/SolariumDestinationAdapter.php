@@ -34,7 +34,7 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
      * @var LoggerInterface
      */
     private $logger;
-    
+
     /**
      * @var int Number of documents to collect before flushing intermediate results to Solr.
      */
@@ -110,7 +110,7 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
 
     public function prepareUpdate($destinationObject)
     {
-        return new Document($destinationObject->getFields());
+        return $this->solrClient->createUpdate()->createDocument($destinationObject->getFields());
     }
 
     /**
