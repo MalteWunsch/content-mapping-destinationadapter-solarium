@@ -10,9 +10,9 @@ namespace Webfactory\ContentMapping\DestinationAdapter\Solarium;
 
 use Psr\Log\LoggerInterface;
 use Solarium\Client;
-use Solarium\QueryType\Select\Result\DocumentInterface as SelectedDocumentInterface;
 use Solarium\QueryType\Select\Result\Result as SelectResult;
-use Solarium\QueryType\Update\Query\Document\DocumentInterface;
+use Solarium\Core\Query\DocumentInterface;
+use Solarium\QueryType\Update\Query\Document as ReadWriteDocument;
 use Webfactory\ContentMapping\DestinationAdapter;
 use Solarium\QueryType\Update\Query\Document\Document;
 use Webfactory\ContentMapping\ProgressListenerInterface;
@@ -34,7 +34,7 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
      * @var LoggerInterface
      */
     private $logger;
-    
+
     /**
      * @var int Number of documents to collect before flushing intermediate results to Solr.
      */
@@ -92,9 +92,8 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
     /**
      * @param int $id
      * @param string $className
-     * @return DocumentInterface
      */
-    public function createObject($id, $className)
+    public function createObject($id, $className): ReadWriteDocument
     {
         $normalizedObjectClass = $this->normalizeObjectClass($className);
 
@@ -108,13 +107,13 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
         return $newDocument;
     }
 
-    public function prepareUpdate($destinationObject)
+    public function prepareUpdate($destinationObject): ReadWriteDocument
     {
-        return new Document($destinationObject->getFields());
+        return new ReadWriteDocument($destinationObject->getFields());
     }
 
     /**
-     * @param SelectedDocumentInterface $destinationObject
+     * @param DocumentInterface $destinationObject
      */
     public function delete($destinationObject)
     {
@@ -124,10 +123,14 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
     /**
      * This method is a hook e.g. to notice an external change tracker that the $object has been updated.
      *
-     * @param DocumentInterface $objectInDestinationSystem
+     * @param ReadWriteDocument $objectInDestinationSystem
      */
     public function updated($objectInDestinationSystem)
     {
+        if (!$objectInDestinationSystem instanceof ReadWriteDocument) {
+            throw new InvalidParameterException();
+        }
+
         $this->newOrUpdatedDocuments[] = $objectInDestinationSystem;
     }
 
