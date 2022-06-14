@@ -61,9 +61,9 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
         $this->batchSize = $batchSize;
     }
 
-    public function getObjectsOrderedById(string $objectClass): Iterator
+    public function getObjectsOrderedById(string $className): Iterator
     {
-        $normalizedObjectClass = $this->normalizeObjectClass($objectClass);
+        $normalizedObjectClass = $this->normalizeObjectClass($className);
         $query = $this->solrClient->createSelect()
             ->setQuery('objectclass:'.$normalizedObjectClass)
             ->setStart(0)
@@ -78,10 +78,11 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
             "SolariumDestinationAdapter found {number} objects for objectClass {objectClass}",
             [
                 'number' => $resultset->getNumFound(),
-                'objectClass' => $objectClass,
+                'objectClass' => $className,
             ]
         );
 
+        /** @var Iterator<DocumentInterface> */
         return $resultset->getIterator();
     }
 
@@ -91,6 +92,7 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
 
         $updateQuery = $this->solrClient->createUpdate();
 
+        /** @var ReadWriteDocument */
         $newDocument = $updateQuery->createDocument();
         $newDocument->id = $normalizedObjectClass.':'.$id;
         $newDocument->objectid = $id;
@@ -99,25 +101,20 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
         return $newDocument;
     }
 
-    public function prepareUpdate($destinationObject): ReadWriteDocument
+    public function prepareUpdate(object $destinationObject): ReadWriteDocument
     {
         return new ReadWriteDocument($destinationObject->getFields());
     }
 
-    /**
-     * @param DocumentInterface $destinationObject
-     */
-    public function delete($destinationObject): void
+    public function delete(object $objectInDestinationSystem): void
     {
-        $this->deletedDocumentIds[] = $destinationObject->id;
+        $this->deletedDocumentIds[] = $objectInDestinationSystem->id;
     }
 
     /**
      * This method is a hook e.g. to notice an external change tracker that the $object has been updated.
-     *
-     * @param ReadWriteDocument $objectInDestinationSystem
      */
-    public function updated($objectInDestinationSystem): void
+    public function updated(object $objectInDestinationSystem): void
     {
         if (!$objectInDestinationSystem instanceof ReadWriteDocument) {
             throw new \InvalidArgumentException();
@@ -140,10 +137,8 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
 
     /**
      * @inheritdoc
-     *
-     * @param DocumentInterface $objectInDestinationSystem
      */
-    public function idOf($objectInDestinationSystem): int
+    public function idOf(object $objectInDestinationSystem): int
     {
         if (!isset($objectInDestinationSystem->objectid)) {
             throw new InvalidArgumentException();
@@ -152,7 +147,7 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
         return $objectInDestinationSystem->objectid;
     }
 
-    private function flush()
+    private function flush(): void
     {
         $this->logger->info(
             "Flushing {numberInsertsUpdates} inserts or updates and {numberDeletes} deletes",
