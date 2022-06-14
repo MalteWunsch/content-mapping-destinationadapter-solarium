@@ -8,8 +8,11 @@
 
 namespace Webfactory\ContentMapping\DestinationAdapter\Solarium;
 
+use Iterator;
+use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
-use Solarium\Client;
+use Psr\Log\NullLogger;
+use Solarium\Core\Client\ClientInterface;
 use Solarium\QueryType\Select\Result\Result as SelectResult;
 use Solarium\Core\Query\DocumentInterface;
 use Solarium\QueryType\Update\Query\Document as ReadWriteDocument;
@@ -21,12 +24,13 @@ use Webfactory\ContentMapping\UpdateableObjectProviderInterface;
 /**
  * Adapter for the solarium Solr client as a destination system.
  *
- * @final by default
+ * @template-implements DestinationAdapter<DocumentInterface, ReadWriteDocument>
+ * @template-implements UpdateableObjectProviderInterface<DocumentInterface, ReadWriteDocument>
  */
 final class SolariumDestinationAdapter implements DestinationAdapter, ProgressListenerInterface, UpdateableObjectProviderInterface
 {
     /**
-     * @var Client
+     * @var ClientInterface
      */
     private $solrClient;
 
@@ -43,177 +47,157 @@ final class SolariumDestinationAdapter implements DestinationAdapter, ProgressLi
     /**
      * @var DocumentInterface[]
      */
-    private $newOrUpdatedDocuments = array();
+    private $newOrUpdatedDocuments = [];
 
     /**
      * @var string[]|int[]
      */
-    private $deletedDocumentIds = array();
+    private $deletedDocumentIds = [];
 
-    /**
-     * @param Client $solrClient
-     * @param LoggerInterface $logger
-     */
-    public function __construct(Client $solrClient, LoggerInterface $logger = null, $batchSize = 20)
+    public function __construct(ClientInterface $solrClient, LoggerInterface $logger = null, int $batchSize = 20)
     {
         $this->solrClient = $solrClient;
         $this->logger = $logger ?: new NullLogger();
         $this->batchSize = $batchSize;
     }
 
-    /**
-     * @param string $objectClass Fully qualified class name of the object
-     * @return \ArrayIterator
-     */
-    public function getObjectsOrderedById($objectClass)
+    public function getObjectsOrderedById(string $className): Iterator
     {
-        $normalizedObjectClass = $this->normalizeObjectClass($objectClass);
+        $normalizedObjectClass = $this->normalizeObjectClass($className);
         $query = $this->solrClient->createSelect()
-                                  ->setQuery('objectclass:' . $normalizedObjectClass)
-                                  ->setStart(0)
-                                  ->setRows(1000000)
-                                  ->setFields(array('id', 'objectid', 'objectclass', 'hash'))
-                                  ->addSort('objectid', 'asc');
+            ->setQuery('objectclass:'.$normalizedObjectClass)
+            ->setStart(0)
+            ->setRows(1000000)
+            ->setFields(['id', 'objectid', 'objectclass', 'hash'])
+            ->addSort('objectid', 'asc');
 
         /** @var SelectResult $resultset */
         $resultset = $this->solrClient->execute($query);
 
         $this->logger->info(
             "SolariumDestinationAdapter found {number} objects for objectClass {objectClass}",
-            array(
+            [
                 'number' => $resultset->getNumFound(),
-                'objectClass' => $objectClass,
-            )
+                'objectClass' => $className,
+            ]
         );
 
+        /** @var Iterator<DocumentInterface> */
         return $resultset->getIterator();
     }
 
-    /**
-     * @param int $id
-     * @param string $className
-     */
-    public function createObject($id, $className): ReadWriteDocument
+    public function createObject(int $id, string $className): ReadWriteDocument
     {
         $normalizedObjectClass = $this->normalizeObjectClass($className);
 
         $updateQuery = $this->solrClient->createUpdate();
 
+        /** @var ReadWriteDocument */
         $newDocument = $updateQuery->createDocument();
-        $newDocument->id = $normalizedObjectClass . ':' . $id;
+        $newDocument->id = $normalizedObjectClass.':'.$id;
         $newDocument->objectid = $id;
         $newDocument->objectclass = $normalizedObjectClass;
 
         return $newDocument;
     }
 
-    public function prepareUpdate($destinationObject): ReadWriteDocument
+    public function prepareUpdate(object $destinationObject): ReadWriteDocument
     {
         return new ReadWriteDocument($destinationObject->getFields());
     }
 
-    /**
-     * @param DocumentInterface $destinationObject
-     */
-    public function delete($destinationObject)
+    public function delete(object $objectInDestinationSystem): void
     {
-        $this->deletedDocumentIds[] = $destinationObject->id;
+        $this->deletedDocumentIds[] = $objectInDestinationSystem->id;
     }
 
     /**
      * This method is a hook e.g. to notice an external change tracker that the $object has been updated.
-     *
-     * @param ReadWriteDocument $objectInDestinationSystem
      */
-    public function updated($objectInDestinationSystem)
+    public function updated(object $objectInDestinationSystem): void
     {
         if (!$objectInDestinationSystem instanceof ReadWriteDocument) {
-            throw new InvalidParameterException();
+            throw new \InvalidArgumentException();
         }
 
         $this->newOrUpdatedDocuments[] = $objectInDestinationSystem;
     }
 
-    public function afterObjectProcessed()
+    public function afterObjectProcessed(): void
     {
         if ((count($this->deletedDocumentIds) + count($this->newOrUpdatedDocuments)) >= $this->batchSize) {
             $this->flush();
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public function commit()
+    public function commit(): void
     {
         $this->flush();
     }
 
     /**
      * @inheritdoc
-     *
-     * @param DocumentInterface $objectInDestinationSystem
-     * @return int
      */
-    public function idOf($objectInDestinationSystem)
+    public function idOf(object $objectInDestinationSystem): int
     {
+        if (!isset($objectInDestinationSystem->objectid)) {
+            throw new InvalidArgumentException();
+        }
+
         return $objectInDestinationSystem->objectid;
     }
 
-    private function flush()
+    private function flush(): void
     {
         $this->logger->info(
             "Flushing {numberInsertsUpdates} inserts or updates and {numberDeletes} deletes",
-            array(
+            [
                 'numberInsertsUpdates' => count($this->newOrUpdatedDocuments),
-                'numberDeletes' => count($this->deletedDocumentIds),
-            )
+                'numberDeletes'        => count($this->deletedDocumentIds),
+            ]
         );
 
         if (count($this->deletedDocumentIds) === 0 && count($this->newOrUpdatedDocuments) === 0) {
             return;
         }
 
-        $update = $this->solrClient->createUpdate();
+        $updateQuery = $this->solrClient->createUpdate();
 
         if ($this->deletedDocumentIds) {
-            $update->addDeleteByIds($this->deletedDocumentIds);
+            $updateQuery->addDeleteByIds($this->deletedDocumentIds);
         }
 
         if ($this->newOrUpdatedDocuments) {
-            $update->addDocuments($this->newOrUpdatedDocuments);
+            $updateQuery->addDocuments($this->newOrUpdatedDocuments);
         }
 
-        $update->addCommit();
-        $this->solrClient->execute($update);
+        $updateQuery->addCommit();
+        $this->solrClient->execute($updateQuery);
 
-        $this->deletedDocumentIds = array();
-        $this->newOrUpdatedDocuments = array();
+        $this->deletedDocumentIds = [];
+        $this->newOrUpdatedDocuments = [];
 
         $this->logger->debug("Flushed");
 
         /*
          * Manually trigger garbage collection
-         * \Solarium\QueryType\Update\Query\Document\Document might hold a reference
+         * \Solarium\Core\Query\AbstractQuery might hold a reference
          * to a "helper" object \Solarium\Core\Query\Helper, which in turn references
          * back the document. This circle prevents the normal, refcount-based GC from
          * cleaning up the processed Document instances after we release them.
          *
          * To prevent memory exhaustion, we start a GC cycle collection run.
          */
-        $update = null;
+        $updateQuery = null;
         gc_collect_cycles();
     }
 
-    /**
-     * @param string $objectClass Fully qualified class name of the object
-     * @return string
-     */
-    private function normalizeObjectClass($objectClass)
+    private function normalizeObjectClass(string $objectClass): string
     {
         if (substr($objectClass, 0, 1) === '\\') {
             $objectClass = substr($objectClass, 1);
         }
+
         return str_replace('\\', '-', $objectClass);
     }
 }
